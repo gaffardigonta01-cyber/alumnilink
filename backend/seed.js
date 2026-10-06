@@ -1,8 +1,8 @@
-﻿import dotenv from 'dotenv';
+import dotenv from 'dotenv';
 dotenv.config();
 
 import { connectDB, sequelize } from './config/db.js';
-import { User, Session, Referral, Message, Resource } from './models/index.js';
+import { User, Session, Referral, Message, Resource, MessageRequest } from './models/index.js';
 
 const seedData = async () => {
   try {
@@ -10,6 +10,7 @@ const seedData = async () => {
     await connectDB();
 
     console.log('Clearing old records...');
+    await MessageRequest.destroy({ where: {}, force: true });
     await Message.destroy({ where: {}, force: true });
     await Referral.destroy({ where: {}, force: true });
     await Session.destroy({ where: {}, force: true });
@@ -26,6 +27,17 @@ const seedData = async () => {
       major: 'Computer Science & Engineering',
       graduationYear: 2026,
       gpa: 3.85,
+    });
+
+    const student2 = await User.create({
+      name: 'Sadia Islam',
+      email: 'sadia@test.com',
+      password: 'password123',
+      role: 'student',
+      bio: 'Junior CSE student specializing in Cloud, Microservices & DevOps.',
+      major: 'Computer Science & Engineering',
+      graduationYear: 2027,
+      gpa: 3.92,
     });
 
     const alumni1 = await User.create({
@@ -127,7 +139,15 @@ const seedData = async () => {
       status: 'under_review',
     });
 
-    console.log('Creating sample messages...');
+    console.log('Creating sample message requests and conversations...');
+    // 1. Accepted request & active channel: student <-> alumni1
+    await MessageRequest.create({
+      studentId: student.id,
+      alumniId: alumni1.id,
+      status: 'accepted',
+      note: 'Hi Dr. Rahman! Thank you for accepting my mentorship request.',
+    });
+
     await Message.create({
       senderId: student.id,
       recipientId: alumni1.id,
@@ -139,10 +159,40 @@ const seedData = async () => {
       text: 'Hi Tanvir! Glad to connect. Feel free to schedule a session whenever you are ready.',
     });
 
+    // 2. Pending message request: student2 (Sadia) -> alumni1 (Dr. Tariq Rahman)
+    await MessageRequest.create({
+      studentId: student2.id,
+      alumniId: alumni1.id,
+      status: 'pending',
+      note: 'Hello Dr. Rahman! I am interested in cloud systems architecture and would love your mentorship on Kubernetes and Go.',
+    });
+    await Message.create({
+      senderId: student2.id,
+      recipientId: alumni1.id,
+      text: 'Hello Dr. Rahman! I am interested in cloud systems architecture and would love your mentorship on Kubernetes and Go.',
+      read: false,
+    });
+
+    // 3. Pending message request: student (Tanvir) -> alumni2 (Nusrat Jahan)
+    await MessageRequest.create({
+      studentId: student.id,
+      alumniId: alumni2.id,
+      status: 'pending',
+      note: 'Hi Nusrat! I have been following your product design work and would appreciate feedback on preparing design case studies.',
+    });
+    await Message.create({
+      senderId: student.id,
+      recipientId: alumni2.id,
+      text: 'Hi Nusrat! I have been following your product design work and would appreciate feedback on preparing design case studies.',
+      read: false,
+    });
+
     console.log('\n==========================================');
     console.log('MYSQL SEEDING COMPLETED SUCCESSFULLY!');
-    console.log('Demo Student:  student@test.com  /  password123');
-    console.log('Demo Alumni:   alumni@test.com   /  password123');
+    console.log('Demo Student 1: student@test.com  / password123 (Active chat + 1 Pending request)');
+    console.log('Demo Student 2: sadia@test.com    / password123 (1 Pending request)');
+    console.log('Demo Alumni 1:  alumni@test.com   / password123 (1 Active chat + 1 Pending request in queue)');
+    console.log('Demo Alumni 2:  nusrat@test.com   / password123 (1 Pending request in queue)');
     console.log('==========================================\n');
 
     process.exit(0);

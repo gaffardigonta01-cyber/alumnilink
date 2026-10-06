@@ -50,14 +50,45 @@ export const register = asyncHandler(async (req, res, next) => {
 
 export const login = asyncHandler(async (req, res, next) => {
   const { email, password, remember } = req.body;
+  const targetRole = req.params.role || req.body.role;
 
   if (!email || !password) {
     return next(new AppError('Please provide email and password.', 400));
   }
 
-  const user = await User.findOne({ where: { email } });
+  const user = await User.findOne({ where: { email: email.trim() } });
 
-  if (!user || !(await user.comparePassword(password))) {
+  if (!user) {
+    return next(new AppError('Invalid email or password.', 401));
+  }
+
+  // Cross-role verification: strictly block students from alumni route and alumni from student route
+  if (targetRole && user.role !== targetRole) {
+    if (user.role === 'student' && targetRole === 'alumni') {
+      return next(
+        new AppError(
+          'Access denied: This email is registered as a student account and cannot access the alumni login route.',
+          403
+        )
+      );
+    }
+    if (user.role === 'alumni' && targetRole === 'student') {
+      return next(
+        new AppError(
+          'Access denied: This email is registered as an alumni account and cannot access the student login route.',
+          403
+        )
+      );
+    }
+    return next(
+      new AppError(
+        `Access denied: This account has the role "${user.role}" and cannot access the ${targetRole} login route.`,
+        403
+      )
+    );
+  }
+
+  if (!(await user.comparePassword(password))) {
     return next(new AppError('Invalid email or password.', 401));
   }
 

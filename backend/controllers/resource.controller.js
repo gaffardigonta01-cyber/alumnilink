@@ -159,7 +159,7 @@ export const viewResource = asyncHandler(async (req, res, next) => {
   const typeStr = resource.type || 'PDF Guide';
 
   doc.fontSize(10).fillColor('#64748b').font('Helvetica').text(`Uploaded by: ${authorName}${authorCompany}   |   Format: ${typeStr}   |   Date: ${dateStr}`);
-  
+
   // Dividing Line
   doc.moveDown(0.8);
   doc.strokeColor('#cbd5e1').lineWidth(1).moveTo(50, doc.y).lineTo(doc.page.width - 50, doc.y).stroke();

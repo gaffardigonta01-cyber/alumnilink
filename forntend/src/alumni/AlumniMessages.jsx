@@ -11,7 +11,10 @@ export default function AlumniMessages() {
   const [filterTab, setFilterTab] = useState('all') // 'all' | 'requests' | 'accepted'
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState([])
+  const [conversationStatus, setConversationStatus] = useState(null)
+  const [activePartnerData, setActivePartnerData] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [actionLoading, setActionLoading] = useState(false)
   const [toast, setToast] = useState(null)
   const bottomRef = useRef(null)
 
@@ -25,13 +28,13 @@ export default function AlumniMessages() {
     fetchThreads()
   }, [])
 
-  const fetchThreads = async () => {
+  const fetchThreads = async (preserveActiveId = null) => {
     try {
       setLoading(true)
       const data = await messageAPI.getThreads()
       const list = (data.threads || []).map(t => ({
-        id: t.partnerId,
-        partnerId: t.partnerId,
+        id: String(t.partnerId),
+        partnerId: String(t.partnerId),
         name: (t.partnerName || 'Student').split(' ')[0],
         fullName: t.partnerName || 'Student',
         preview: t.lastMessage || 'No messages yet',
@@ -39,14 +42,17 @@ export default function AlumniMessages() {
         avatar: (t.partnerName || 'ST').slice(0, 2).toUpperCase(),
         partnerAvatar: t.partnerAvatar || '',
         unread: t.unread || 0,
-        online: true,
         color: '#16428c',
-        status: 'accepted',
+        status: t.status || 'accepted', // 'pending' | 'accepted' | 'declined'
         university: t.partnerRole || 'Student',
+        studentDetails: t.studentDetails || null,
       }))
       setThreads(list)
-      if (list.length > 0 && !activeThread) {
+      const targetId = preserveActiveId || activeThread
+      if (list.length > 0 && !targetId) {
         setActiveThread(list[0].id)
+      } else if (targetId && list.some(t => t.id === targetId)) {
+        setActiveThread(targetId)
       }
     } catch (err) {
       console.error("Failed to load threads:", err)
@@ -59,10 +65,19 @@ export default function AlumniMessages() {
   useEffect(() => {
     if (!activeThread) {
       setMessages([])
+      setConversationStatus(null)
+      setActivePartnerData(null)
       return
     }
+
     messageAPI.getConversation(activeThread)
-      .then(d => setMessages(d.messages || []))
+      .then(d => {
+        setMessages(d.messages || [])
+        setConversationStatus(d.requestStatus || 'accepted')
+        setActivePartnerData(d.partner || null)
+        // Sync thread status with conversation status
+        setThreads(prev => prev.map(t => t.id === String(activeThread) ? { ...t, status: d.requestStatus || t.status } : t))
+      })
       .catch(err => console.error("Failed to load conversation:", err))
   }, [activeThread])
 
@@ -80,25 +95,44 @@ export default function AlumniMessages() {
   const filteredThreads = threads.filter(t => {
     if (filterTab === 'requests') return t.status === 'pending'
     if (filterTab === 'accepted') return t.status === 'accepted'
-    return t.status !== 'rejected'
+    return true
   })
 
-  const handleAccept = (id) => {
-    setThreads(prev => prev.map(t => t.id === id ? { ...t, status: 'accepted', unread: 0 } : t))
-    showToastMsg(`Accepted message request from ${threads.find(t => t.id === id)?.fullName}. You can now chat!`)
+  // Accept a pending message request -> establish direct channel
+  const handleAccept = async (id) => {
+    const targetThread = threads.find(t => t.id === id)
+    try {
+      setActionLoading(true)
+      await messageAPI.acceptRequest(id)
+      setThreads(prev => prev.map(t => t.id === id ? { ...t, status: 'accepted', unread: 0 } : t))
+      setConversationStatus('accepted')
+      showToastMsg(`✓ Accepted message request from ${targetThread?.fullName || 'Student'}! Direct conversation channel established.`)
+    } catch (err) {
+      console.error("Failed to accept message request:", err)
+      showToastMsg("Error accepting message request.")
+    } finally {
+      setActionLoading(false)
+    }
   }
 
-  const handleReject = (id) => {
-    const targetName = threads.find(t => t.id === id)?.fullName
-    setThreads(prev => prev.map(t => t.id === id ? { ...t, status: 'rejected' } : t))
-    showToastMsg(`Declined message request from ${targetName}.`)
+  // Decline a message request
+  const handleReject = async (id) => {
+    const targetThread = threads.find(t => t.id === id)
+    try {
+      setActionLoading(true)
+      await messageAPI.declineRequest(id)
+      setThreads(prev => prev.map(t => t.id === id ? { ...t, status: 'declined' } : t))
+      setConversationStatus('declined')
+      showToastMsg(`Declined message request from ${targetThread?.fullName || 'Student'}.`)
+    } catch (err) {
+      console.error("Failed to decline message request:", err)
+      showToastMsg("Error declining message request.")
+    } finally {
+      setActionLoading(false)
+    }
   }
 
-  const handleUndo = (id) => {
-    setThreads(prev => prev.map(t => t.id === id ? { ...t, status: 'pending' } : t))
-  }
-
-  // Periodic poll for new messages
+  // Periodic poll for new messages & threads
   useEffect(() => {
     if (!activeThread) return
     const interval = setInterval(() => {
@@ -106,6 +140,7 @@ export default function AlumniMessages() {
         .then(d => {
           if (Array.isArray(d.messages)) {
             setMessages(d.messages)
+            if (d.requestStatus) setConversationStatus(d.requestStatus)
           }
         })
         .catch(() => {})
@@ -129,10 +164,11 @@ export default function AlumniMessages() {
       const res = await messageAPI.send(activeThread, text)
       if (res.message) {
         setMessages(prev => prev.map(m => m._id === optimisticMsg._id ? res.message : m))
+        setConversationStatus('accepted')
         setThreads(prev =>
           prev.map(t =>
             String(t.id) === String(activeThread)
-              ? { ...t, preview: text, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
+              ? { ...t, status: 'accepted', preview: text, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
               : t
           )
         )
@@ -143,10 +179,27 @@ export default function AlumniMessages() {
     }
   }
 
+  const currentStatus = conversationStatus || thread?.status || 'accepted'
+
   return (
     <div className="messages-layout-container">
       <div className="topbar">
-        <span className="topbar-title">Messages & Requests</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span className="topbar-title">Messages & Requests</span>
+          {pendingCount > 0 && (
+            <span style={{
+              background: '#fef3c7',
+              color: '#92400e',
+              border: '1px solid #fde68a',
+              padding: '2px 9px',
+              borderRadius: 99,
+              fontSize: 12,
+              fontWeight: 700,
+            }}>
+              {pendingCount} Request{pendingCount > 1 ? 's' : ''} Pending
+            </span>
+          )}
+        </div>
         <div className="topbar-spacer" />
         <NotificationBell />
       </div>
@@ -179,7 +232,7 @@ export default function AlumniMessages() {
           <div className="messages-sidebar">
             <div className="messages-sidebar-header" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
-                <span style={{ fontWeight: 800, fontSize: 15 }}>Inquiries</span>
+                <span style={{ fontWeight: 800, fontSize: 15 }}>Conversations</span>
                 {threads.length > 0 && (
                   <span style={{ background: '#d4af37', color: '#1a1a1a', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 99 }}>
                     {threads.length} Total
@@ -187,47 +240,64 @@ export default function AlumniMessages() {
                 )}
               </div>
 
-              {/* Tabs */}
+              {/* Queue Filtering Tabs */}
               <div style={{ display: 'flex', gap: 6, background: '#f3f4f6', padding: 3, borderRadius: 8, width: '100%' }}>
                 <button
+                  type="button"
                   onClick={() => setFilterTab('all')}
                   style={{
-                    flex: 1, padding: '5px 8px', border: 'none', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                    flex: 1, padding: '6px 8px', border: 'none', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer',
                     background: filterTab === 'all' ? '#fff' : 'transparent',
                     color: filterTab === 'all' ? '#111827' : '#6b7280',
                     boxShadow: filterTab === 'all' ? '0 1px 3px rgba(0,0,0,.1)' : 'none',
+                    transition: 'all 0.15s ease',
                   }}
                 >
                   All ({threads.length})
                 </button>
                 <button
+                  type="button"
                   onClick={() => setFilterTab('accepted')}
                   style={{
-                    flex: 1, padding: '5px 8px', border: 'none', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                    flex: 1, padding: '6px 8px', border: 'none', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer',
                     background: filterTab === 'accepted' ? '#fff' : 'transparent',
                     color: filterTab === 'accepted' ? '#111827' : '#6b7280',
                     boxShadow: filterTab === 'accepted' ? '0 1px 3px rgba(0,0,0,.1)' : 'none',
+                    transition: 'all 0.15s ease',
                   }}
                 >
-                  Active ({acceptedCount})
+                  Direct ({acceptedCount})
                 </button>
-                {pendingCount > 0 && (
-                  <button
-                    onClick={() => setFilterTab('requests')}
-                    style={{
-                      flex: 1, padding: '5px 8px', border: 'none', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer',
-                      background: filterTab === 'requests' ? '#fff' : 'transparent',
-                      color: filterTab === 'requests' ? '#111827' : '#6b7280',
-                      boxShadow: filterTab === 'requests' ? '0 1px 3px rgba(0,0,0,.1)' : 'none',
-                    }}
-                  >
-                    Requests ({pendingCount})
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => setFilterTab('requests')}
+                  style={{
+                    flex: 1, padding: '6px 8px', border: 'none', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                    background: filterTab === 'requests' ? '#fff' : 'transparent',
+                    color: filterTab === 'requests' ? '#92400e' : '#6b7280',
+                    boxShadow: filterTab === 'requests' ? '0 1px 3px rgba(0,0,0,.1)' : 'none',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
+                    transition: 'all 0.15s ease',
+                  }}
+                >
+                  <span>Requests</span>
+                  {pendingCount > 0 && (
+                    <span style={{
+                      background: '#d97706',
+                      color: '#fff',
+                      fontSize: 10,
+                      fontWeight: 800,
+                      padding: '1px 6px',
+                      borderRadius: 99,
+                    }}>
+                      {pendingCount}
+                    </span>
+                  )}
+                </button>
               </div>
             </div>
 
-            {/* List */}
+            {/* Thread List */}
             <div className="messages-sidebar-list">
               {loading ? (
                 <div style={{ padding: 30, textAlign: 'center', color: '#9ca3af', fontSize: 13 }}>
@@ -235,7 +305,7 @@ export default function AlumniMessages() {
                 </div>
               ) : filteredThreads.length === 0 ? (
                 <div style={{ padding: 30, textAlign: 'center', color: '#9ca3af', fontSize: 13 }}>
-                  No message threads found.
+                  {filterTab === 'requests' ? 'No pending message requests.' : 'No conversations found.'}
                 </div>
               ) : (
                 filteredThreads.map(t => (
@@ -243,6 +313,9 @@ export default function AlumniMessages() {
                     key={t.id}
                     className={`thread-item${activeThread === t.id ? ' active' : ''}`}
                     onClick={() => setActiveThread(t.id)}
+                    style={{
+                      borderLeft: t.status === 'pending' ? '3px solid #d97706' : '3px solid transparent',
+                    }}
                   >
                     <UserAvatar
                       avatar={t.partnerAvatar}
@@ -256,8 +329,28 @@ export default function AlumniMessages() {
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                         <span className="thread-name">{t.name}</span>
                         {t.status === 'pending' && (
-                          <span style={{ fontSize: 9, fontWeight: 800, background: '#fef3c7', color: '#92400e', padding: '1px 5px', borderRadius: 4 }}>
-                            REQ
+                          <span style={{
+                            fontSize: 9,
+                            fontWeight: 800,
+                            background: '#fef3c7',
+                            color: '#92400e',
+                            padding: '1px 6px',
+                            borderRadius: 4,
+                            border: '1px solid #fde68a'
+                          }}>
+                            REQUEST
+                          </span>
+                        )}
+                        {t.status === 'declined' && (
+                          <span style={{
+                            fontSize: 9,
+                            fontWeight: 800,
+                            background: '#fee2e2',
+                            color: '#991b1b',
+                            padding: '1px 5px',
+                            borderRadius: 4
+                          }}>
+                            DECLINED
                           </span>
                         )}
                       </div>
@@ -288,8 +381,8 @@ export default function AlumniMessages() {
                     ←
                   </button>
                   <UserAvatar
-                    avatar={thread.partnerAvatar}
-                    name={thread.fullName || thread.name}
+                    avatar={activePartnerData?.avatar || thread.partnerAvatar}
+                    name={activePartnerData?.name || thread.fullName || thread.name}
                     size={40}
                     className="thread-avatar"
                     bg={thread.color || '#16428c'}
@@ -297,23 +390,147 @@ export default function AlumniMessages() {
                   />
                   <div className="chat-header-info">
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span className="chat-header-name">{thread.fullName}</span>
-                      <span style={{
-                        fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 99,
-                        background: '#ecfdf5', color: '#047857'
-                      }}>
-                        Active
-                      </span>
+                      <span className="chat-header-name">{activePartnerData?.name || thread.fullName}</span>
+                      {currentStatus === 'pending' ? (
+                        <span style={{
+                          fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 99,
+                          background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a'
+                        }}>
+                          Pending Request
+                        </span>
+                      ) : currentStatus === 'declined' ? (
+                        <span style={{
+                          fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 99,
+                          background: '#fee2e2', color: '#991b1b'
+                        }}>
+                          Declined
+                        </span>
+                      ) : (
+                        <span style={{
+                          fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 99,
+                          background: '#ecfdf5', color: '#047857'
+                        }}>
+                          Direct Channel Active
+                        </span>
+                      )}
                     </div>
-                    <div className="chat-header-status">{thread.university}</div>
+                    <div className="chat-header-status">
+                      {activePartnerData?.major || thread.studentDetails?.major || thread.university}
+                      {(activePartnerData?.graduationYear || thread.studentDetails?.graduationYear) ? ` • Class of ${activePartnerData?.graduationYear || thread.studentDetails?.graduationYear}` : ''}
+                    </div>
                   </div>
                 </div>
+
+                {/* Message Request Queue Review Banner (if status is pending) */}
+                {currentStatus === 'pending' && (
+                  <div style={{
+                    background: 'linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%)',
+                    borderBottom: '1px solid #fde68a',
+                    padding: '16px 20px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 12,
+                    boxShadow: '0 2px 8px rgba(217, 119, 6, 0.08)'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 10 }}>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ fontWeight: 800, fontSize: 14, color: '#92400e' }}>
+                            Incoming Message Request
+                          </span>
+                        </div>
+                        <p style={{ margin: '4px 0 0 0', fontSize: 13, color: '#78350f', lineHeight: 1.4 }}>
+                          <strong>{activePartnerData?.name || thread.fullName}</strong> initiated this message request. Review their message and choose whether to establish a direct conversation channel.
+                        </p>
+                      </div>
+
+                      {/* Accept / Decline Action Buttons */}
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          disabled={actionLoading}
+                          onClick={() => handleReject(thread.id)}
+                          style={{
+                            background: '#fee2e2',
+                            color: '#991b1b',
+                            border: '1px solid #fca5a5',
+                            fontWeight: 700,
+                            padding: '6px 14px',
+                            cursor: 'pointer',
+                            borderRadius: 6,
+                          }}
+                        >
+                          Decline
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-gold btn-sm"
+                          disabled={actionLoading}
+                          onClick={() => handleAccept(thread.id)}
+                          style={{
+                            fontWeight: 700,
+                            padding: '6px 18px',
+                            boxShadow: '0 2px 6px rgba(212, 175, 55, 0.3)',
+                          }}
+                        >
+                          Accept Request
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Student Info Pill */}
+                    <div style={{
+                      display: 'flex',
+                      gap: 12,
+                      background: 'rgba(255,255,255,0.7)',
+                      padding: '8px 12px',
+                      borderRadius: 6,
+                      fontSize: 12,
+                      color: '#4b5563',
+                      alignItems: 'center',
+                      flexWrap: 'wrap'
+                    }}>
+                      <span><strong>Program:</strong> {activePartnerData?.major || thread.studentDetails?.major || 'Student'}</span>
+                      {(activePartnerData?.graduationYear || thread.studentDetails?.graduationYear) && (
+                        <span><strong>Year:</strong> {activePartnerData?.graduationYear || thread.studentDetails?.graduationYear}</span>
+                      )}
+                      {(activePartnerData?.bio || thread.studentDetails?.bio) && (
+                        <span><strong>Bio:</strong> {activePartnerData?.bio || thread.studentDetails?.bio}</span>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Declined Banner */}
+                {currentStatus === 'declined' && (
+                  <div style={{
+                    background: '#fef2f2',
+                    borderBottom: '1px solid #fecaca',
+                    padding: '12px 20px',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    color: '#991b1b',
+                    fontSize: 13,
+                  }}>
+                    <span>You declined this message request. No direct conversation channel is active.</span>
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={() => handleAccept(thread.id)}
+                      style={{ background: '#fff', border: '1px solid #fca5a5', color: '#991b1b', fontWeight: 600, padding: '4px 10px' }}
+                    >
+                      Accept & Reopen
+                    </button>
+                  </div>
+                )}
 
                 {/* Messages Body */}
                 <div className="chat-messages" style={{ overflowY: 'auto', padding: '16px', flex: 1 }}>
                   {messages.length === 0 ? (
                     <div style={{ textAlign: 'center', color: '#9ca3af', marginTop: 40, fontSize: 13 }}>
-                      No messages yet in this conversation.
+                      No messages yet in this request.
                     </div>
                   ) : (
                     messages.map(msg => {
@@ -321,7 +538,7 @@ export default function AlumniMessages() {
                       const isMe = String(senderId) === String(myId)
                       const timeStr = msg.createdAt ? new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''
                       return (
-                        <div key={msg._id || Math.random()} style={{ display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start', marginBottom: 12 }}>
+                        <div key={msg._id || msg.id || Math.random()} style={{ display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start', marginBottom: 12 }}>
                           <div
                             className="msg-bubble"
                             style={{
@@ -344,21 +561,56 @@ export default function AlumniMessages() {
                 </div>
 
                 {/* Input Area */}
-                <div className="chat-input-area">
-                  <input
-                    className="chat-input"
-                    placeholder="Type a message..."
-                    value={input}
-                    onChange={e => setInput(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && sendMessage()}
-                  />
-                  <button className="btn btn-gold btn-sm" onClick={sendMessage}>Send</button>
-                </div>
+                {currentStatus === 'pending' ? (
+                  <div style={{
+                    padding: '12px 20px',
+                    background: '#f9fafb',
+                    borderTop: '1px solid #e5e7eb',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 12
+                  }}>
+                    <span style={{ fontSize: 13, color: '#6b7280' }}>
+                      Direct channel is locked until you accept or decline this request.
+                    </span>
+                    <button
+                      type="button"
+                      className="btn btn-gold btn-sm"
+                      onClick={() => handleAccept(thread.id)}
+                      disabled={actionLoading}
+                    >
+                      Accept to Reply
+                    </button>
+                  </div>
+                ) : currentStatus === 'declined' ? (
+                  <div style={{
+                    padding: '12px 20px',
+                    background: '#f9fafb',
+                    borderTop: '1px solid #e5e7eb',
+                    textAlign: 'center',
+                    color: '#9ca3af',
+                    fontSize: 13
+                  }}>
+                    Messaging is disabled for declined requests.
+                  </div>
+                ) : (
+                  <div className="chat-input-area">
+                    <input
+                      className="chat-input"
+                      placeholder="Type a message..."
+                      value={input}
+                      onChange={e => setInput(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && sendMessage()}
+                    />
+                    <button className="btn btn-gold btn-sm" onClick={sendMessage}>Send</button>
+                  </div>
+                )}
               </>
             ) : (
               <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af', flexDirection: 'column', gap: 8 }}>
                 <div style={{ fontSize: 32 }}>💬</div>
-                <div>Select a conversation from the left to view messages</div>
+                <div>Select a conversation or request from the left to view messages</div>
               </div>
             )}
           </div>

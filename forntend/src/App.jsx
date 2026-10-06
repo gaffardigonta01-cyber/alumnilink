@@ -23,7 +23,11 @@ function AppShell() {
         setAuthView('signup')
       } else if (location.pathname === '/forgot-password') {
         setAuthView('forgot-password')
-      } else if (location.pathname === '/login') {
+      } else if (
+        location.pathname.startsWith('/login') ||
+        location.pathname === '/student/login' ||
+        location.pathname === '/alumni/login'
+      ) {
         setAuthView('login')
       }
     }
@@ -102,6 +106,9 @@ function AppShell() {
     <Routes>
       <Route path="/dashboard" element={<Navigate to="/" replace />} />
       <Route path="/login" element={<Navigate to="/" replace />} />
+      <Route path="/login/*" element={<Navigate to="/" replace />} />
+      <Route path="/student/login" element={<Navigate to="/" replace />} />
+      <Route path="/alumni/login" element={<Navigate to="/" replace />} />
       <Route path="/signup" element={<Navigate to="/" replace />} />
       <Route path="/forgot-password" element={<Navigate to="/" replace />} />
       {user.role === 'student' ? (

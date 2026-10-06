@@ -6,6 +6,13 @@ import Resource from './Resource.js';
 import Notification from './Notification.js';
 import Job from './Job.js';
 import JobApplication from './JobApplication.js';
+import MessageRequest from './MessageRequest.js';
+
+// User <-> MessageRequest
+User.hasMany(MessageRequest, { as: 'sentMessageRequests', foreignKey: 'studentId', onDelete: 'CASCADE' });
+User.hasMany(MessageRequest, { as: 'receivedMessageRequests', foreignKey: 'alumniId', onDelete: 'CASCADE' });
+MessageRequest.belongsTo(User, { as: 'student', foreignKey: 'studentId' });
+MessageRequest.belongsTo(User, { as: 'alumni', foreignKey: 'alumniId' });
 
 // User <-> Notification
 User.hasMany(Notification, { as: 'notifications', foreignKey: 'userId', onDelete: 'CASCADE' });
@@ -45,4 +52,4 @@ JobApplication.belongsTo(Job, { as: 'job', foreignKey: 'jobId' });
 User.hasMany(JobApplication, { as: 'jobApplications', foreignKey: 'studentId', onDelete: 'CASCADE' });
 JobApplication.belongsTo(User, { as: 'student', foreignKey: 'studentId' });
 
-export { User, Session, Referral, Message, Resource, Notification, Job, JobApplication };
+export { User, Session, Referral, Message, Resource, Notification, Job, JobApplication, MessageRequest };

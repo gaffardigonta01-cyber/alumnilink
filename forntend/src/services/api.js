@@ -43,7 +43,13 @@ async function request(endpoint, options = {}) {
 // -- Auth ----------------------------------------------------------------------
 export const authAPI = {
   register: (body) => request("/auth/register", { method: "POST", body: JSON.stringify(body) }),
-  login: (body) => request("/auth/login", { method: "POST", body: JSON.stringify(body) }),
+  login: (body, role) => {
+    const roleParam = role || (typeof body === 'object' ? body.role : null);
+    const endpoint = roleParam ? `/auth/login/${roleParam}` : "/auth/login";
+    return request(endpoint, { method: "POST", body: JSON.stringify(body) });
+  },
+  studentLogin: (body) => request("/auth/login/student", { method: "POST", body: JSON.stringify({ ...body, role: 'student' }) }),
+  alumniLogin: (body) => request("/auth/login/alumni", { method: "POST", body: JSON.stringify({ ...body, role: 'alumni' }) }),
   getMe: () => request("/auth/me"),
   logout: () => request("/auth/logout", { method: "POST" }),
   forgotPassword: (body) => request("/auth/forgot-password", { method: "POST", body: JSON.stringify(body) }),
@@ -119,6 +125,9 @@ export const messageAPI = {
     });
   },
   markAsRead: (otherUserId) => request(`/messages/${otherUserId}/read`, { method: "PUT" }),
+  acceptRequest: (partnerId) => request(`/messages/requests/${partnerId}/accept`, { method: "PUT" }),
+  declineRequest: (partnerId) => request(`/messages/requests/${partnerId}/decline`, { method: "PUT" }),
+  getRequests: () => request("/messages/requests"),
 };
 
 // -- Resources -----------------------------------------------------------------

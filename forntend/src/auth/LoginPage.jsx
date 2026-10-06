@@ -10,7 +10,11 @@ export default function LoginPage({ onLogin, onSwitchToSignUp, onSwitchToForgotP
   const navigate = useNavigate()
   const navState = location?.state || {}
 
-  const [role, setRole] = useState(navState.role || 'student')
+  const [role, setRole] = useState(() => {
+    if (location.pathname.includes('alumni')) return 'alumni'
+    if (location.pathname.includes('student')) return 'student'
+    return navState.role || 'student'
+  })
   const [email, setEmail] = useState(() => {
     return navState.email || localStorage.getItem('al_remember_email') || ''
   })
@@ -22,6 +26,13 @@ export default function LoginPage({ onLogin, onSwitchToSignUp, onSwitchToForgotP
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState(navState.successMessage || '')
+
+  const handleRoleChange = (newRole) => {
+    setRole(newRole)
+    setError('')
+    setSuccess('')
+    navigate(`/login/${newRole}`, { replace: true, state: { ...navState, role: newRole } })
+  }
 
   const handleLogin = async (e) => {
     e.preventDefault()
@@ -35,7 +46,16 @@ export default function LoginPage({ onLogin, onSwitchToSignUp, onSwitchToForgotP
 
     setLoading(true)
     try {
-      const user = await login(email.trim(), password, remember)
+      const user = await login(email.trim(), password, remember, role)
+
+      // Strict role verification: prevent cross-role authentication
+      if (user.role !== role) {
+        throw new Error(
+          role === 'student'
+            ? 'Access denied: This email is registered as an alumni account and cannot log in through the student portal.'
+            : 'Access denied: This email is registered as a student account and cannot log in through the alumni portal.'
+        )
+      }
 
       if (remember) {
         localStorage.setItem('al_remember_device', 'true')
@@ -43,11 +63,6 @@ export default function LoginPage({ onLogin, onSwitchToSignUp, onSwitchToForgotP
       } else {
         localStorage.removeItem('al_remember_device')
         localStorage.removeItem('al_remember_email')
-      }
-
-      // Warn if role tab doesn't match DB role, but still log them in
-      if (user.role !== role) {
-        // silently switch — the app routes by user.role anyway
       }
 
       window.history.replaceState(null, '', '/')
@@ -112,19 +127,21 @@ export default function LoginPage({ onLogin, onSwitchToSignUp, onSwitchToForgotP
       <div className="login-right">
         <div className="login-form-wrap">
           <h1 className="login-title">Welcome back</h1>
-          <p className="login-subtitle">Sign in to your professional portal.</p>
+          <p className="login-subtitle">
+            Sign in to your {role === 'alumni' ? 'Alumni' : 'Student'} portal.
+          </p>
 
           {/* Role toggle */}
           <div className="role-tabs">
             <div
               className={`role-tab ${role === 'student' ? 'active' : ''}`}
-              onClick={() => setRole('student')}
+              onClick={() => handleRoleChange('student')}
             >
               Student
             </div>
             <div
               className={`role-tab ${role === 'alumni' ? 'active' : ''}`}
-              onClick={() => setRole('alumni')}
+              onClick={() => handleRoleChange('alumni')}
             >
               Alumni
             </div>
